@@ -302,28 +302,82 @@ def update_worker_status(
 
     return worker
 
-# Remove worker
+# # Remove worker
+# @router.delete("/workers/{username}")
+# def remove_worker(username: str, session: Session = Depends(get_session), admin: User = Depends(admin_required)):
+#     # Find the worker by username
+#     worker = session.exec(
+#         select(User).where(User.username == username, User.role == "worker")
+#     ).first()
+
+#     if not worker:
+#         raise HTTPException(status_code=404, detail="Worker not found")
+
+#     session.delete(worker)
+#     session.commit()
+
+#     log_action(
+#         session,
+#         performed_by=admin.id,
+#         action="removed_worker",
+#         details=f"Worker '{worker.username}' removed"
+#     )
+
+#     return {"detail": f"Worker '{worker.username}' removed"}
+
+
+def send_dismissal_sms(phone_number: str, worker_name: str):
+    sms_payload = {
+        "phone_number": phone_number,
+        "message": f"Hello {worker_name}, you have been dismissed from your duties."
+    }
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            sms_response = client.post(
+                "http://localhost:8000/sms/send-sms",
+                json=sms_payload
+            )
+            sms_response.raise_for_status()
+            sms_result = sms_response.json()
+            
+            if not sms_result.get("success"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SMS failed: {sms_result}"
+                )
+    except Exception as sms_err:
+        raise HTTPException(status_code=400, detail=f"Failed to send dismissal SMS: {sms_err}")
+
+
 @router.delete("/workers/{username}")
 def remove_worker(username: str, session: Session = Depends(get_session), admin: User = Depends(admin_required)):
-    # Find the worker by username
+    # Find the worker
     worker = session.exec(
-        select(User).where(User.username == username, User.role == "worker")
+        select(User).where((User.username == username) & (User.role == "worker"))
     ).first()
 
     if not worker:
         raise HTTPException(status_code=404, detail="Worker not found")
 
+    # Send dismissal SMS
+    send_dismissal_sms(worker.phone_number, worker.username)
+
+    # Delete worker from database
     session.delete(worker)
     session.commit()
 
+    # Log the action
     log_action(
         session,
         performed_by=admin.id,
         action="removed_worker",
-        details=f"Worker '{worker.username}' removed"
+        details=f"Worker '{worker.username}' removed and notified via SMS"
     )
 
-    return {"detail": f"Worker '{worker.username}' removed"}
+    return {"detail": f"Worker '{worker.username}' removed and SMS sent successfully"}
+
+
 
 # @router.post("/tasks/", response_model=Task)
 # def create_task(
